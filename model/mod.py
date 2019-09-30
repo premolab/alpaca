@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from nn.modules.loss import _Loss
+from torch.nn.modules.loss import _Loss
 
 from .mlp import BaseMLP
 from .fit import BaseFit
@@ -26,19 +26,21 @@ class BaseMOD(nn.Module):
     
     def forward(self, x, dropout_rate=0, train=False, dropout_mask=None):
         out = torch.DoubleTensor(x).to(self.device) if isinstance(x, np.ndarray) else x
-        out = torch.cat([mlp(out) for mlp in self.mlps], dim=1).mean(dim=1, keepdim=True)
+        out = torch.stack([mlp(out, dropout_rate, train, dropout_mask) for mlp in self.mlps]).mean(dim=0)
         return out if train else out.detach()
 
 class MOD(BaseMOD, BaseFit):
     def __init__(self, layer_sizes, num_net, l2_reg=1e-5):
         super(MOD, self).__init__(layer_sizes, num_net)
-        self.criterion = MODLoss()
+        self.criterion = NLLLoss()
         self.optimizer = torch.optim.Adadelta(self.parameters(), weight_decay=l2_reg)
         
-class MODLoss(_Loss):
+class NLLLoss(_Loss):
     def __init__(self, size_average=None, reduce=None, reduction='mean'):
-        super(MODLoss, self).__init__(size_average, reduce, reduction)
+        super(NLLLoss, self).__init__(size_average, reduce, reduction)
 
     def forward(self, input, target):
-        # TO DO: write correct loss functions
-        pass
+        means = input[:, [0]]
+        stds = torch.abs(input[:, [1]])
+        dist = torch.distributions.normal.Normal(means, stds)
+        return -dist.log_prob(target).mean()
